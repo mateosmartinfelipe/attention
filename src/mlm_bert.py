@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 from typing import List, Dict, Tuple, Callable
 import regex as re
-from utils import TEXT, MAX_LENGTH, PERCENT_PADDING, D
-from random import randrange
+from utils import TEXT, MAX_LENGTH, PERCENT_MASKING, D
+import random
 import numpy as np
 import torch.nn as nn
 
@@ -52,22 +52,27 @@ def get_voc_and_embedings(
 
 def mask(
     token_embedings: List[int], special_tokens: Dict[str, int], percent: float
-) -> Tuple[List[int], List[int], List[int]]:
+) -> Tuple[torch.Tensor, List[int], List[int]]:
     """return the mask tokens and their position"""
-    start = token_embedings.find(special_tokens["[CLS]"])
-    end = (
-        token_embedings.find(special_tokens["[PAD]"])
-        if token_embedings.find(special_tokens["[PAD]"]) > 0
-        else len(token_embedings) - 1
-    )
-    n = np.ceil((start - end) * percent)
-    mask_index = sorted(np.random.sample(range(start, end + 1), n))
+    try:
+        start = token_embedings.index(special_tokens["[CLS]"])
+    except:
+        start = 0
+
+    try:
+        end = token_embedings.index(special_tokens["[PAD]"])
+    except:
+        end = len(token_embedings)
+
+    n = np.floor((end - 1 - start) * percent)
+    n_amended = 1 if n == 0 else int(n)
+    mask_index = sorted(random.sample(range(start, end), n_amended))
     mask_tokens = [token_embedings[i] for i in mask_index]
     mask_embedings = [
         special_tokens["[MASK]"] if i in mask_index else v
-        for i, v in enumerate(mask_embedings)
+        for i, v in enumerate(token_embedings)
     ]
-    return mask_embedings, mask_tokens, mask_index
+    return torch.tensor(mask_embedings), mask_tokens, mask_index
 
 
 def token_embedding_fn(
@@ -82,7 +87,7 @@ def token_embedding_fn(
         token_embedding.append(voc["[PAD]"])
         sentence_length += 1
     token_embedding.append(voc["[SEP]"])
-    return torch.tensor(token_embedding)
+    return token_embedding
 
 
 def segment_embedding(max_length: int) -> torch.Tensor:
@@ -117,7 +122,9 @@ def get_embedings_fn(
     d: int,
     tokenize_fn: Callable[..., List[int]],
     formater_fn: Callable[..., str],
+    mask_fn: Callable[..., List[int]],
     special_tokens: Dict[str, int] = special_tokens,
+    percent: float = 0.15,
 ):
     """TODO"""
     uniqe_words = get_unique_words(text)
@@ -128,9 +135,12 @@ def get_embedings_fn(
     def compute(sentence: str) -> torch.tensor:
         clean_sentence = formater_fn(sentence)
         tokens = tokenize_fn(clean_sentence, max_length, voc)
-        token_embedding = token_embeding_fn(tokens)
+        tokenized_and_masked, mask_tokens, mask_index = mask_fn(
+            tokens, special_tokens, percent
+        )
+        token_embedding = token_embeding_fn(tokenized_and_masked)
         embedings = token_embedding + pos_embedings
-        return embedings
+        return [torch.tensor(embedings), mask_tokens, mask_index]
 
     return compute
 
@@ -141,7 +151,9 @@ emededder = get_embedings_fn(
     d=D,
     tokenize_fn=token_embedding_fn,
     formater_fn=format_text,
+    mask_fn=mask,
     special_tokens=special_tokens,
+    percent=PERCENT_MASKING,
 )
 
 a = emededder(sentence=sentences[0])

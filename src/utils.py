@@ -7,5 +7,5 @@ TEXT = (
     "Thanks you Romeo"
 )
 MAX_LENGTH = 120
-PERCENT_PADDING = 0.15
+PERCENT_MASKING = 0.15
 D = 512
