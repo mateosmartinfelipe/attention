@@ -1,5 +1,3 @@
-from collections import defaultdict
-from re import I
 from attention_is_all_you_need import TransformerBlock
 import torch
 import torch.nn as nn
@@ -68,11 +66,16 @@ def mask(
     n_amended = 1 if n == 0 else int(n)
     mask_index = sorted(random.sample(range(start, end), n_amended))
     mask_tokens = [token_embedings[i] for i in mask_index]
+    # TODO ,to the 15% that is assing to be mask , take the 10% and assing a random token
     mask_embedings = [
         special_tokens["[MASK]"] if i in mask_index else v
         for i, v in enumerate(token_embedings)
     ]
-    return torch.tensor(mask_embedings), mask_tokens, mask_index
+    return (
+        torch.tensor(mask_embedings),
+        mask_tokens,
+        mask_index,
+    )
 
 
 def token_embedding_fn(
@@ -132,7 +135,7 @@ def get_embedings_fn(
     # the + 2 for the cls and sep tokens in each sentence
     pos_embedings = position_embedding(max_length + 2, d=d)
 
-    def compute(sentence: str) -> torch.tensor:
+    def compute(sentence: str) -> Tuple[torch.Tensor, List[int], List[int], int]:
         clean_sentence = formater_fn(sentence)
         tokens = tokenize_fn(clean_sentence, max_length, voc)
         tokenized_and_masked, mask_tokens, mask_index = mask_fn(
@@ -140,7 +143,7 @@ def get_embedings_fn(
         )
         token_embedding = token_embeding_fn(tokenized_and_masked)
         embedings = token_embedding + pos_embedings
-        return [torch.tensor(embedings), mask_tokens, mask_index]
+        return [torch.tensor(embedings), mask_tokens, mask_index, len(voc)]
 
     return compute
 
@@ -156,18 +159,69 @@ emededder = get_embedings_fn(
     percent=PERCENT_MASKING,
 )
 
-a = emededder(sentence=sentences[0])
+
+def batch_process(
+    batch: List[str],
+    build_embeddings: Callable[..., Tuple[torch.Tensor, List[int], List[int]]],
+) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:
+    embeddings = []
+    mask_elemns = []
+    mask_index = []
+    for sentence in batch:
+        emmbed, mask, idx, voc_size = build_embeddings(sentence=sentence)
+        embeddings.append(torch.unsqueeze(emmbed, 0))
+        mask_elemns.append(mask)
+        mask_index.append(idx)
+    labels = build_labels_and_weights(mask_elemns, voc_size)
+    return (
+        torch.cat(embeddings, 0),
+        labels,
+        mask_index,
+    )
 
 
-def batch_process(batch: List[str], special_tokens: Dict[str, int]) -> List[List[int]]:
-    ...
+def build_labels_and_weights(
+    mask_tokens: List[List[int]], voc_size: int
+) -> torch.Tensor:
+    batch_num = []
+    voc_ecode = []
+    for i, tokens in enumerate(mask_tokens):
+        for token in tokens:
+            batch_num.append(i)
+            voc_ecode.append(token)
+    index = [batch_num, voc_ecode]
+    value = [1] * len(batch_num)
+    return torch.sparse_coo_tensor(index, value, size=(len(mask_tokens), voc_size))
 
 
-class MLM(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
+a, b, c = batch_process(sentences, emededder)
+print("")
 
 
-tokens_a_index, tokens_b_index = randrange(len(sentences)), randrange(len(sentences))
-print(tokens_a_index)
-print(tokens_b_index)
+class Encoder(nn.Module):
+    def __init__(
+        self,
+        layers,
+        vocabulary_size,
+        embeded_size,
+        heads,
+        dropout,
+        forward_expansion,
+    ) -> None:
+        super(Encoder, self).__init__()
+
+        self.transformer = nn.ModuleList(
+            [
+                TransformerBlock(embeded_size, heads, dropout, forward_expansion)
+                for _ in range(layers)
+            ]
+        )
+        self.dense = nn.Linear(embeded_size, vocabulary_size)
+        # Not needed as it is part or CrossEntropy loss fucntion
+        # self.softmax = nn.Softmax(2)
+
+    def forward(self, query, key, value):
+        x = self.transformer(query, key, value, False)
+        x = self.dense(x)
+        x = self.softmax(x)
+        return x
