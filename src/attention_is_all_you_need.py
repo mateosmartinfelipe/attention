@@ -85,6 +85,7 @@ class TransformerBlock(nn.Module):
         self.drop_out = nn.Dropout(dropout)
 
     def forward(self, value, key, query, mask):
+        # we are not using the mask atttibute
         attention = self.attention(value, key, query)
         x = self.drop_out(self.norm1(attention + query))
         forward = self.feed_forward(x)
