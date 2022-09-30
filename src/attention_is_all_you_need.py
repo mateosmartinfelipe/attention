@@ -90,7 +90,7 @@ class TransformerBlock(nn.Module):
         x = self.drop_out(self.norm1(attention + query))
         forward = self.feed_forward(x)
         out = self.drop_out(self.norm2(forward + x))
-        return out
+        return torch.sigmoid(out)
 
 
 class Encoder(nn.Module):
@@ -200,7 +200,7 @@ class Decoder(nn.Module):
     def forward(self, x, enc_key_out, enco_values_out, src_mask, target_mask):
         N, seq_length = x.shape
         positions = torch.arange(0, seq_length).expand(N, seq_length).to(self.device)
-        x = self.dropout(self.word_embedding(x) + self.word_embedding(positions))
+        x = self.dropout(self.word_embedding(x) + self.position_embedding(positions))
         for layer in self.layers:
             x = layer(x, enc_key_out, enco_values_out, src_mask, target_mask)
         out = self.feed_forward(x)
